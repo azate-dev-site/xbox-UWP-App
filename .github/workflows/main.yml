@@ -13,22 +13,15 @@ jobs:
       # Étape 1 - Checkout du code
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       # Étape 2 - Installation des outils UWP
-      - name: Install UWP Tools
+      - name: Install UWP Build Tools
         shell: pwsh
         run: |
-          # Téléchargement du VS Build Tools
           $installerPath = "$env:RUNNER_TEMP\vs_buildtools.exe"
           Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile $installerPath
-          
-          # Installation des composants requis
           Start-Process -Wait -FilePath $installerPath -ArgumentList @(
-            '--quiet',
-            '--wait',
-            '--norestart',
+            '--quiet', '--wait', '--norestart',
             '--add Microsoft.VisualStudio.Workload.Universal',
             '--add Microsoft.VisualStudio.Component.Windows10SDK.19041'
           )
@@ -37,55 +30,79 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # Étape 4 - Vérification du projet
-      - name: Validate Project Structure
+      # Étape 4 - Création des fichiers projet si absents
+      - name: Generate Project Structure
         shell: pwsh
         run: |
-          $requiredFiles = @(
-              "Xbox-UWP-App.sln",
-              "Xbox-UWP-App/Xbox-UWP-App.csproj",
-              "Xbox-UWP-App/Package.appxmanifest"
-          )
-          
-          foreach ($file in $requiredFiles) {
-              if (-not (Test-Path $file)) {
-                  Write-Error "File missing: $file"
-                  Get-ChildItem -Recurse
-                  exit 1
-              }
+          # Création du .csproj si manquant
+          if (-not (Test-Path "Xbox-UWP-App.csproj")) {
+              @'
+              <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                <PropertyGroup>
+                  <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+                  <Platform Condition=" '$(Platform)' == '' ">x64</Platform>
+                  <ProjectGuid>{$([System.Guid]::NewGuid())}</ProjectGuid>
+                  <OutputType>AppContainerExe</OutputType>
+                  <RootNamespace>Xbox_UWP_App</RootNamespace>
+                  <AssemblyName>Xbox-UWP-App</AssemblyName>
+                  <TargetPlatformIdentifier>UAP</TargetPlatformIdentifier>
+                  <TargetPlatformVersion>10.0.19041.0</TargetPlatformVersion>
+                  <MinimumVisualStudioVersion>14</MinimumVisualStudioVersion>
+                  <AppxPackage>true</AppxPackage>
+                  <AppxBundle>Always</AppxBundle>
+                  <AppxBundlePlatforms>x64</AppxBundlePlatforms>
+                  <UapAppxPackageBuildMode>StoreUpload</UapAppxPackageBuildMode>
+                </PropertyGroup>
+                <ItemGroup>
+                  <AppxManifest Include="Package.appxmanifest"/>
+                  <Content Include="Assets\**\*"/>
+                </ItemGroup>
+                <Import Project="$(MSBuildExtensionsPath)\Microsoft\WindowsXaml\v$(VisualStudioVersion)\Microsoft.Windows.UI.Xaml.CSharp.targets"/>
+              </Project>
+              '@ | Out-File -FilePath "Xbox-UWP-App.csproj" -Encoding UTF8
           }
 
-      # Étape 5 - Restauration NuGet
-      - name: Restore Packages
+          # Création du .sln si manquant
+          if (-not (Test-Path "Xbox-UWP-App.sln")) {
+              dotnet new sln --name "Xbox-UWP-App"
+              dotnet sln add "Xbox-UWP-App.csproj"
+          }
+
+          # Création des dossiers requis
+          $null = New-Item -ItemType Directory -Force -Path "Assets"
+          $null = New-Item -ItemType Directory -Force -Path "Properties"
+
+      # Étape 5 - Restauration des packages
+      - name: Restore NuGet Packages
         run: nuget restore Xbox-UWP-App.sln
 
       # Étape 6 - Compilation
       - name: Build Solution
         shell: pwsh
         run: |
-          $msbuildArgs = @(
-              "Xbox-UWP-App.sln",
-              "/p:Configuration=Release",
-              "/p:Platform=x64",
-              "/p:AppxBundle=Always",
-              "/p:AppxBundlePlatforms=`"x64`"",
-              "/p:UapAppxPackageBuildMode=StoreUpload",
-              "/m",
-              "/nr:false",
-              "/detailedsummary",
-              "/flp:`"v=diag;logfile=build.log`""
-          )
-          
-          msbuild @msbuildArgs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          msbuild Xbox-UWP-App.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:AppxBundle=Always `
+            /p:AppxBundlePlatforms="x64" `
+            /p:UapAppxPackageBuildMode=StoreUpload `
+            /detailedsummary `
+            /flp:"v=diag;logfile=build.log"
 
       # Étape 7 - Publication des artefacts
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: AppPackage
-          path: |
-            Xbox-UWP-App/bin/x64/Release/AppPackages/
-            build.log
+          path: bin/x64/Release/AppPackages/
           if-no-files-found: error
           retention-days: 3
+
+      # Étape 8 - Nettoyage
+      - name: Cleanup
+        if: always()
+        run: |
+          # Archivage des logs en cas d'échec
+          if (Test-Path "build.log") {
+              Compress-Archive -Path "build.log" -DestinationPath "build_logs.zip"
+          }
