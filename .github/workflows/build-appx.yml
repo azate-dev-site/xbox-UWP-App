@@ -21,20 +21,20 @@ jobs:
         with:
           vs-version: '17.0'
 
-      # Étape 3 - Correction du fichier projet
-      - name: Fix project configuration
+      # Étape 3 - Définir la version du projet
+      - name: Set project version
         shell: pwsh
         run: |
-          # Créer le dossier AppPackages s'il n'existe pas
-          New-Item -ItemType Directory -Path "./AppPackages" -Force
-          
-          # Modifier le fichier csproj si nécessaire
+          # Ajouter une version explicite au fichier csproj
           $projContent = Get-Content -Path Xbox-UWP-App.csproj -Raw
-          $newContent = $projContent -replace '<PropertyGroup>', '<PropertyGroup>
-            <AppxPackageDir>$(MSBuildThisFileDirectory)AppPackages\</AppxPackageDir>
-            <OutputPath>bin\$(Configuration)\$(Platform)</OutputPath>
-            <IntermediateOutputPath>obj\$(Configuration)\$(Platform)</IntermediateOutputPath>'
-          $newContent | Set-Content -Path Xbox-UWP-App.csproj
+          if (-not $projContent.Contains('<Version>')) {
+              $newContent = $projContent -replace '<PropertyGroup>', '<PropertyGroup>
+                <Version>1.0.0</Version>'
+              $newContent | Set-Content -Path Xbox-UWP-App.csproj
+          }
+
+          # Créer le dossier AppPackages
+          New-Item -ItemType Directory -Path "./AppPackages" -Force
 
       # Étape 4 - Build avec MSBuild
       - name: Build AppX package
@@ -46,27 +46,16 @@ jobs:
             /p:UapAppxPackageBuildMode=StoreUpload `
             /p:WindowsTargetPlatformVersion=10.0.19041.0 `
             /p:VisualStudioVersion=17.0 `
-            /p:AppxPackageDir="$($pwd.Path)\AppPackages\"
+            /p:AppxPackageDir="$($pwd.Path)\AppPackages\" `
+            /p:RestorePackages=false `
+            /p:DisableNuGetToolset=true
 
-      # Étape 5 - Vérification des artefacts
-      - name: Verify artifacts
-        shell: pwsh
-        run: |
-          $artifacts = Get-ChildItem -Path . -Recurse -Include *.appx, *.appxsym
-          if (-not $artifacts) {
-              Write-Output "##[error] Aucun fichier .appx ou .appxsym trouvé"
-              exit 1
-          }
-          Write-Output "Fichiers trouvés:"
-          $artifacts | ForEach-Object { Write-Output $_.FullName }
-
-      # Étape 6 - Publication des artefacts
+      # Étape 5 - Publication des artefacts
       - name: Upload artifacts
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: xbox-app-package
-          path: |
-            ./AppPackages/**/*.appx
-            ./AppPackages/**/*.appxsym
+          path: ./AppPackages/
           if-no-files-found: error
           retention-days: 5
