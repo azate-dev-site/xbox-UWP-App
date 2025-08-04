@@ -1,14 +1,9 @@
-name: Build and Package Xbox UWP App
+name: Build UWP for Xbox
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
-
-env:
-  SOLUTION_NAME: Xbox-UWP-App.sln
-  BUILD_PLATFORM: x64
-  BUILD_CONFIGURATION: Release
 
 jobs:
   build:
@@ -18,79 +13,63 @@ jobs:
       # Étape 1 - Checkout du code
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      # Étape 2 - Configuration de l'environnement MSBuild
-      - name: Setup MSBuild Environment
+      # Étape 2 - Configuration MSBuild
+      - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
-        with:
-          vs-version: '17.0'
-          components: Microsoft.VisualStudio.ComponentGroup.UWP.BuildTools
 
-      # Étape 3 - Installation des dépendances
-      - name: Install Build Tools
+      # Étape 3 - Installation des composants UWP
+      - name: Install UWP Build Tools
         run: |
-          choco install --yes --no-progress \
-            visualstudio2022-workload-universalbuildtools \
-            visualstudio2022-component-group-unity
-          refreshenv
+          # Installation via le VS Installer
+          $installPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          & "$installPath\Common7\IDE\VSInstaller.exe" modify `
+            --installPath "$installPath" `
+            --add Microsoft.VisualStudio.Workload.Universal `
+            --add Microsoft.VisualStudio.ComponentGroup.UWP.BuildTools `
+            --quiet --norestart --wait
 
       # Étape 4 - Vérification de l'environnement
       - name: Verify Environment
-        shell: pwsh
         run: |
-          Write-Host "MSBuild version:"
           msbuild /version
-          
-          Write-Host "UWP Components:"
-          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -products * -requires Microsoft.Component.MSBuild -property installationPath
+          nuget help
 
-      # Étape 5 - Compilation avec journalisation avancée
+      # Étape 5 - Restauration des packages NuGet
+      - name: Restore NuGet Packages
+        run: nuget restore Xbox-UWP-App.sln
+
+      # Étape 6 - Compilation avec logging détaillé
       - name: Build Solution
-        shell: pwsh
         run: |
-          $msbuildArgs = @(
-              "$env:Solution_NAME",
-              "/p:Configuration=$env:BUILD_CONFIGURATION",
-              "/p:Platform=$env:BUILD_PLATFORM",
-              "/p:AppxBundle=Always",
-              "/p:AppxBundlePlatforms=""$env:BUILD_PLATFORM""",
-              "/p:UapAppxPackageBuildMode=StoreUpload",
-              "/m",
-              "/nr:false",
-              "/detailedsummary",
-              "/flp1:v=diag;logfile=build_diagnostics.log",
-              "/flp2:errorsonly;logfile=build_errors.log",
-              "/flp3:warningsonly;logfile=build_warnings.log"
-          )
+          msbuild Xbox-UWP-App.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:AppxBundle=Always `
+            /p:AppxBundlePlatforms="x64" `
+            /p:UapAppxPackageBuildMode=StoreUpload `
+            /detailedsummary `
+            /flp1:v=diag;logfile=build_diagnostics.log `
+            /flp2:errorsonly;logfile=build_errors.log `
+            /flp3:warningsonly;logfile=build_warnings.log
 
-          msbuild @msbuildArgs
-          
-          # Vérification du résultat
-          if (!(Test-Path "bin\$env:BUILD_PLATFORM\$env:BUILD_CONFIGURATION\AppPackages")) {
-              throw "Build succeeded but AppPackages folder not found!"
-          }
-
-      # Étape 6 - Archivage des résultats
-      - name: Archive Build Artifacts
+      # Étape 7 - Upload des artefacts
+      - name: Upload App Package
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: AppPackage
-          path: |
-            bin/${{ env.BUILD_PLATFORM }}/${{ env.BUILD_CONFIGURATION }}/AppPackages/
-            *.log
+          path: bin/x64/Release/AppPackages/
           retention-days: 3
 
-      # Étape 7 - Notification en cas d'échec
-      - name: Notify on Failure
+      # Étape 8 - Upload des logs en cas d'échec
+      - name: Upload Build Logs
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/upload-artifact@v4
         with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: "❌ Build failed! Check the artifacts for logs."
-            })
+          name: BuildLogs
+          path: |
+            build_diagnostics.log
+            build_errors.log
+            build_warnings.log
+          retention-days: 7
