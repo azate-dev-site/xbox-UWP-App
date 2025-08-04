@@ -10,7 +10,7 @@ jobs:
       - name: Build Solution
         run: msbuild Xbox-UWP-App.sln /p:Configuration=Release /p:Platform=x64
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: AppPackage
           path: bin/x64/Release/AppPackages/
