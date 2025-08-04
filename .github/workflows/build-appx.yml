@@ -1,39 +1,51 @@
-name: Build Xbox UWP App
+name: Build Xbox UWP App Package
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest  # Runner Windows obligatoire pour UWP
+    runs-on: windows-latest
+    timeout-minutes: 20
 
     steps:
-      # Étape 1: Checkout du code
+      # Étape 1 - Checkout du code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Étape 2: Configuration de MSBuild et des outils Windows SDK
+      # Étape 2 - Configuration de l'environnement de build
       - name: Setup build tools
         uses: microsoft/setup-msbuild@v1
         with:
           vs-version: '17.0'  # Visual Studio 2022
 
-      # Étape 3: Restauration des packages (méthode robuste pour UWP)
-      - name: Restore NuGet packages
+      # Étape 3 - Correction du bug NuGet
+      - name: Patch project file
+        shell: pwsh
         run: |
-          # Méthode 1: MSBuild restore (pour projets UWP)
-          msbuild Xbox-UWP-App.sln /t:restore /p:RestorePackagesConfig=true /p:VisualStudioVersion=17.0
-          
-          # Méthode 2: Fallback avec NuGet.exe (si MSBuild échoue)
-          if ($LASTEXITCODE -ne 0) {
-              curl -o nuget.exe https://dist.nuget.org/win-x86-commandline/latest/nuget.exe
-              ./nuget.exe restore Xbox-UWP-App.sln -DisableParallelProcessing
-          }
+          # Ajoute les propriétés manquantes au .csproj
+          $projContent = Get-Content -Path Xbox-UWP-App.csproj -Raw
+          $newContent = $projContent -replace '<TargetPlatformVersion>10.0.19041.0</TargetPlatformVersion>',
+          '<TargetPlatformVersion>10.0.19041.0</TargetPlatformVersion>
+          <NuGetTargetMoniker>UAP,Version=v10.0.19041</NuGetTargetMoniker>
+          <RestoreProjectStyle>PackageReference</RestoreProjectStyle>'
+          $newContent | Set-Content -Path Xbox-UWP-App.csproj
 
-      # Étape 4: Compilation du package .appx
-      - name: Build .appx package
+      # Étape 4 - Restauration des packages (méthode robuste)
+      - name: Restore NuGet packages
+        shell: pwsh
+        run: |
+          # Télécharge NuGet.exe
+          Invoke-WebRequest -Uri "https://dist.nuget.org/win-x86-commandline/v5.11.0/nuget.exe" -OutFile "nuget.exe"
+          
+          # Restauration en 2 passes
+          ./nuget.exe restore Xbox-UWP-App.sln -MSBuildVersion 17 -DisableParallelProcessing
+          msbuild Xbox-UWP-App.sln /t:restore /p:VisualStudioVersion=17.0
+
+      # Étape 5 - Compilation du package .appx
+      - name: Build AppX package
         run: |
           msbuild Xbox-UWP-App.sln `
             /p:Configuration=Release `
@@ -41,21 +53,37 @@ jobs:
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=StoreUpload `
             /p:AppxPackageDir=./AppPackages/ `
-            /p:VisualStudioVersion=17.0
+            /p:VisualStudioVersion=17.0 `
+            /p:WindowsTargetPlatformVersion=10.0.19041.0
 
-      # Étape 5: Upload de l'artifact .appx
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      # Étape 6 - Publication de l'artifact
+      - name: Upload AppX package
+        uses: actions/upload-artifact@v3
         with:
-          name: xbox-appx-package
-          path: ./AppPackages/**/*.appx
+          name: xbox-app-package
+          path: |
+            ./AppPackages/**/*.appx
+            ./AppPackages/**/*.appxsym
           retention-days: 5
 
-      # Optionnel : Déploiement sur Xbox en mode dev
-      - name: Deploy to Xbox (Dev Mode)
-        if: false  # Désactivé par défaut (à activer si besoin)
+      # Optionnel : Déploiement automatique sur Xbox Dev Kit
+      - name: Deploy to Xbox (Optional)
+        if: false  # Changez à true pour activer
+        shell: pwsh
         run: |
-          $xboxIp = "192.168.1.X"  # Remplacer par l'IP de votre Xbox
-          $xboxPin = "123456"       # Remplacer par votre PIN
+          $xboxIp = "192.168.1.X"  # Remplacez par l'IP de votre Xbox
+          $xboxPin = "123456"       # Remplacez par votre PIN
           $appxFile = Get-ChildItem -Path ./AppPackages -Filter *.appx -Recurse | Select-Object -First 1
-          WinAppDeployCmd install -file "$($appxFile.FullName)" -ip $xboxIp -pin $xboxPin
+          
+          if ($appxFile) {
+              Write-Output "Deploying $($appxFile.FullName) to Xbox..."
+              Start-Process "WinAppDeployCmd.exe" -ArgumentList @(
+                  "install",
+                  "-file", "`"$($appxFile.FullName)`"",
+                  "-ip", $xboxIp,
+                  "-pin", $xboxPin
+              ) -Wait -NoNewWindow
+          } else {
+              Write-Error "No .appx file found in AppPackages folder"
+              exit 1
+          }
