@@ -50,7 +50,7 @@ jobs:
 
       # Étape 5 - Publication des artefacts
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: xbox-app-package
           path: |
