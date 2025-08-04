@@ -8,61 +8,50 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       # Étape 1 - Checkout du code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Étape 2 - Installation des composants UWP
-      - name: Setup MSBuild with UWP workload
+      # Étape 2 - Installation des composants requis
+      - name: Install UWP dependencies
+        run: choco install windows-sdk-10.0.19041 --version=10.0.19041.0 -y
+
+      # Étape 3 - Configuration MSBuild
+      - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v1
         with:
           vs-version: '17.0'
           uwp: true
-          workload: Microsoft.VisualStudio.Workload.Universal
-
-      # Étape 3 - Correction du fichier projet
-      - name: Fix project configuration
-        shell: pwsh
-        run: |
-          # Ajoute les propriétés manquantes au fichier csproj
-          $projContent = Get-Content -Path Xbox-UWP-App.csproj -Raw
-          $newContent = $projContent -replace '<PropertyGroup>', '<PropertyGroup>
-            <OutputPath>bin\$(Configuration)\$(Platform)</OutputPath>
-            <IntermediateOutputPath>obj\$(Configuration)\$(Platform)</IntermediateOutputPath>
-            <AppxPackageDir>$(MSBuildThisFileDirectory)AppPackages\</AppxPackageDir>
-            <AppxPackageOutputDir>$(MSBuildThisFileDirectory)AppPackages\</AppxPackageOutputDir>
-            <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
-            <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
-            <NuGetTargetMoniker>UAP,Version=v10.0.19041</NuGetTargetMoniker>'
-          $newContent | Set-Content -Path Xbox-UWP-App.csproj
 
       # Étape 4 - Build avec MSBuild
       - name: Build AppX package
         shell: cmd
         run: |
           msbuild Xbox-UWP-App.csproj ^
-            /t:Restore /t:Build ^
             /p:Configuration=Release ^
             /p:Platform=x64 ^
             /p:AppxBundle=Never ^
             /p:UapAppxPackageBuildMode=StoreUpload ^
             /p:WindowsTargetPlatformVersion=10.0.19041.0 ^
-            /p:VisualStudioVersion=17.0 ^
-            /p:RestoreForce=true
+            /p:RestoreForce=true ^
+            /p:GenerateAppxPackageOnBuild=true ^
+            /p:AppxPackageDir="AppPackages" ^
+            /p:AppxPackageOutputDir="AppPackages"
 
-      # Étape 5 - Vérification des fichiers générés
-      - name: List generated files
+      # Étape 5 - Vérification des fichiers
+      - name: Verify AppX package
         shell: pwsh
         run: |
-          Get-ChildItem -Path . -Recurse -Include *.appx,*.appxsym | % { Write-Output "Found: $($_.FullName)" }
-          if (!(Test-Path -Path "./AppPackages")) {
-            Write-Error "AppPackages directory not found!"
-            Get-ChildItem -Path . -Recurse | % { Write-Output $_.FullName }
-            exit 1
+          $appxFiles = Get-ChildItem -Path . -Recurse -Filter *.appx
+          if (!$appxFiles) {
+              Write-Error "No .appx files found!"
+              Get-ChildItem -Path . -Recurse | Out-Host
+              exit 1
           }
+          $appxFiles | ForEach-Object { Write-Output "Found: $($_.FullName)" }
 
       # Étape 6 - Publication des artefacts
       - name: Upload artifacts
@@ -70,7 +59,7 @@ jobs:
         with:
           name: xbox-app-package
           path: |
-            ./AppPackages/**/*.appx
-            ./AppPackages/**/*.appxsym
+            ./**/*.appx
+            ./**/*.appxsym
           if-no-files-found: error
           retention-days: 5
