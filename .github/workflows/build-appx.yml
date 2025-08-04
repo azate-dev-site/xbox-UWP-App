@@ -34,47 +34,37 @@ jobs:
             <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
             <NuGetTargetMoniker>UAP,Version=v10.0.19041</NuGetTargetMoniker>'
           $newContent | Set-Content -Path Xbox-UWP-App.csproj
+
       # Étape 4 - Build avec MSBuild
       - name: Build AppX package
+        shell: pwsh
         run: |
-          msbuild Xbox-UWP-App.sln `
-            /t:Restore `
+          msbuild Xbox-UWP-App.csproj `
+            /t:Restore;Build;Publish `
             /p:Configuration=Release `
             /p:Platform=x64 `
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=StoreUpload `
+            /p:AppxPackageDir="$(Build.SourcesDirectory)\AppPackages\" `
+            /p:AppxPackageOutputDir="$(Build.SourcesDirectory)\AppPackages\" `
+            /p:GenerateAppxPackageOnBuild=true `
             /p:WindowsTargetPlatformVersion=10.0.19041.0 `
             /p:VisualStudioVersion=17.0 `
-            /p:RestoreForce=true `
-            /p:RestorePackagesConfig=true
-      # Étape 5 - Publication des artefacts
+            /p:RestoreForce=true
+
+      # Étape 5 - Vérification des fichiers générés
+      - name: List generated files
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path . -Recurse -Filter *.appx | ForEach-Object { Write-Output $_.FullName }
+          Get-ChildItem -Path . -Recurse -Filter *.appxsym | ForEach-Object { Write-Output $_.FullName }
+
+      # Étape 6 - Publication des artefacts
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: xbox-app-package
           path: |
-            ./AppPackages/**/*.appx
-            ./AppPackages/**/*.appxsym
+            ./**/*.appx
+            ./**/*.appxsym
           retention-days: 5
-
-      # Optionnel: Déploiement sur Xbox Dev Kit
-      - name: Deploy to Xbox (Optional)
-        if: false  # Mettre à true pour activer
-        shell: pwsh
-        run: |
-          $xboxIp = "192.168.1.X"  # Remplacer par l'IP de votre Xbox
-          $xboxPin = "123456"       # Remplacer par votre PIN
-          $appxFile = Get-ChildItem -Path ./AppPackages -Filter *.appx -Recurse | Select-Object -First 1
-          
-          if ($appxFile) {
-              Write-Output "Deploying $($appxFile.FullName) to Xbox..."
-              Start-Process "WinAppDeployCmd.exe" -ArgumentList @(
-                  "install",
-                  "-file", "`"$($appxFile.FullName)`"",
-                  "-ip", $xboxIp,
-                  "-pin", $xboxPin
-              ) -Wait -NoNewWindow
-          } else {
-              Write-Error "No .appx file found in AppPackages folder"
-              exit 1
-          }
