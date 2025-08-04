@@ -1,0 +1,16 @@
+name: Build UWP for Xbox
+on: [push]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Build Tools
+        run: choco install visualstudio2022-workload-universalbuildtools -y
+      - name: Build Solution
+        run: msbuild Xbox-UWP-App.sln /p:Configuration=Release /p:Platform=x64
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: AppPackage
+          path: bin/x64/Release/AppPackages/
