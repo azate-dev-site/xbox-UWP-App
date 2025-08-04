@@ -1,5 +1,5 @@
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10">
-  <Identity Name="MyXboxApp" Publisher="CN=YourName" Version="1.0.0.0" />
+  <Identity Name="MyXboxApp" Publisher="CN=LOUPIOU" Version="1.0.0.0" />
   <Applications>
     <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="Xbox_UWP_App.App">
       <uap:VisualElements DisplayName="Mon App Xbox" Description="Ma première app !" />
