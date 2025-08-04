@@ -17,11 +17,11 @@ jobs:
         uses: microsoft/setup-msbuild@v1
 
       - name: Restore NuGet packages
-        run: nuget restore YourSolution.sln
+        run: nuget restore Xbox-UWP-App.sln
 
       - name: Build .appx package
         run: |
-          msbuild YourSolution.sln `
+          msbuild Xbox-UWP-App.sln `
             /p:Configuration=Release `
             /p:Platform=x64 `
             /p:AppxBundle=Never `
