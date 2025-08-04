@@ -1,1 +1,35 @@
+name: Build and Package .appx for Xbox
 
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest  # Un runner Windows est nécessaire pour MSBuild
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v1
+
+      - name: Restore NuGet packages
+        run: nuget restore YourSolution.sln
+
+      - name: Build .appx package
+        run: |
+          msbuild YourSolution.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:AppxBundle=Never `
+            /p:UapAppxPackageBuildMode=StoreUpload `
+            /p:AppxPackageDir=./AppPackages/
+
+      - name: Upload .appx artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: xbox-appx-package
+          path: ./AppPackages/**/*.appx
