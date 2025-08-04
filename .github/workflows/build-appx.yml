@@ -11,59 +11,70 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      # Étape 1 - Checkout
-      - uses: actions/checkout@v4
+      # Étape 1 - Checkout du code
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      # Étape 2 - Setup MSBuild
+      # Étape 2 - Configuration MSBuild
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v1
         with:
           vs-version: '17.0'
 
-      # Étape 3 - Nettoyage et création des dossiers
-      - name: Prepare directories
+      # Étape 3 - Correction du fichier projet
+      - name: Fix project configuration
         shell: pwsh
         run: |
-          Remove-Item -Path AppPackages -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Path AppPackages -Force
-          Write-Host "Dossier AppPackages créé à : $(Resolve-Path ./AppPackages)"
-
-      # Étape 4 - Build avec chemins absolus
+          # Ajoute les propriétés manquantes au fichier csproj
+          $projContent = Get-Content -Path Xbox-UWP-App.csproj -Raw
+          $newContent = $projContent -replace '<PropertyGroup>', '<PropertyGroup>
+            <OutputPath>bin\$(Configuration)\$(Platform)</OutputPath>
+            <IntermediateOutputPath>obj\$(Configuration)\$(Platform)</IntermediateOutputPath>
+            <AppxPackageDir>$(MSBuildThisFileDirectory)AppPackages\</AppxPackageDir>
+            <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
+            <NuGetTargetMoniker>UAP,Version=v10.0.19041</NuGetTargetMoniker>'
+          $newContent | Set-Content -Path Xbox-UWP-App.csproj
+      # Étape 4 - Build avec MSBuild
       - name: Build AppX package
-        shell: pwsh
         run: |
-          $solutionPath = Resolve-Path -Path "Xbox-UWP-App.sln"
-          $appxPackageDir = "$env:GITHUB_WORKSPACE\AppPackages"
-          
-          msbuild $solutionPath `
+          msbuild Xbox-UWP-App.sln `
             /t:Restore `
             /p:Configuration=Release `
             /p:Platform=x64 `
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=StoreUpload `
-            /p:AppxPackageDir="$appxPackageDir" `
-            /p:OutputPath="$env:GITHUB_WORKSPACE\bin\Release\x64" `
             /p:WindowsTargetPlatformVersion=10.0.19041.0 `
-            /clp:ErrorsOnly
+            /p:VisualStudioVersion=17.0 `
+            /p:RestoreForce=true `
+            /p:RestorePackagesConfig=true
+      # Étape 5 - Publication des artefacts
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: xbox-app-package
+          path: |
+            ./AppPackages/**/*.appx
+            ./AppPackages/**/*.appxsym
+          retention-days: 5
 
-      # Étape 5 - Vérification améliorée
-      - name: Verify output
+      # Optionnel: Déploiement sur Xbox Dev Kit
+      - name: Deploy to Xbox (Optional)
+        if: false  # Mettre à true pour activer
         shell: pwsh
         run: |
-          $appxFiles = Get-ChildItem -Path "$env:GITHUB_WORKSPACE\AppPackages" -Recurse -Include *.appx, *.appxbundle
+          $xboxIp = "192.168.1.X"  # Remplacer par l'IP de votre Xbox
+          $xboxPin = "123456"       # Remplacer par votre PIN
+          $appxFile = Get-ChildItem -Path ./AppPackages -Filter *.appx -Recurse | Select-Object -First 1
           
-          if ($appxFiles.Count -eq 0) {
-              Write-Host "::error::AUCUN FICHIER TROUVÉ. Contenu de AppPackages :"
-              Get-ChildItem -Path "$env:GITHUB_WORKSPACE\AppPackages" -Recurse | Format-Table FullName
+          if ($appxFile) {
+              Write-Output "Deploying $($appxFile.FullName) to Xbox..."
+              Start-Process "WinAppDeployCmd.exe" -ArgumentList @(
+                  "install",
+                  "-file", "`"$($appxFile.FullName)`"",
+                  "-ip", $xboxIp,
+                  "-pin", $xboxPin
+              ) -Wait -NoNewWindow
+          } else {
+              Write-Error "No .appx file found in AppPackages folder"
               exit 1
           }
-          
-          Write-Host "Fichiers générés :"
-          $appxFiles | ForEach-Object { Write-Host "- $($_.FullName)" }
-
-      # Étape 6 - Upload
-      - uses: actions/upload-artifact@v4
-        with:
-          name: xbox-package
-          path: ${{ github.workspace }}/AppPackages/
-          retention-days: 5
