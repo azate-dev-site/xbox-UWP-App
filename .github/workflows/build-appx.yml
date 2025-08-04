@@ -20,64 +20,50 @@ jobs:
         with:
           vs-version: '17.0'
 
-      # Étape 3 - Création du dossier (obligatoire)
-      - name: Create AppPackages directory
-        shell: cmd
-        run: mkdir AppPackages
-
-      # Étape 4 - Patch du .csproj (sans commentaires problématiques)
-      - name: Fix project configuration
+      # Étape 3 - Nettoyage et création des dossiers
+      - name: Prepare directories
         shell: pwsh
         run: |
-          $projContent = Get-Content -Path Xbox-UWP-App.csproj -Raw
-          $newContent = $projContent -replace '<PropertyGroup>', '<PropertyGroup>
-            <OutputPath>bin\$(Configuration)\$(Platform)</OutputPath>
-            <IntermediateOutputPath>obj\$(Configuration)\$(Platform)</IntermediateOutputPath>
-            <AppxPackageDir>$(MSBuildThisFileDirectory)AppPackages\</AppxPackageDir>
-            <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
-            <NuGetTargetMoniker>UAP,Version=v10.0.19041</NuGetTargetMoniker>'
-          $newContent | Set-Content -Path Xbox-UWP-App.csproj
+          Remove-Item -Path AppPackages -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path AppPackages -Force
+          Write-Host "Dossier AppPackages créé à : $(Resolve-Path ./AppPackages)"
 
-      # Étape 5 - Build (syntaxe batch sécurisée)
+      # Étape 4 - Build avec chemins absolus
       - name: Build AppX package
-        shell: cmd
-        run: |
-          msbuild Xbox-UWP-App.sln ^
-            /t:Restore ^
-            /p:Configuration=Release ^
-            /p:Platform=x64 ^
-            /p:AppxBundle=Never ^
-            /p:UapAppxPackageBuildMode=StoreUpload ^
-            /p:WindowsTargetPlatformVersion=10.0.19041.0 ^
-            /p:VisualStudioVersion=17.0 ^
-            /p:RestoreForce=true ^
-            /p:RestorePackagesConfig=true
-
-      # Étape 6 - Vérification des fichiers
-      - name: Verify AppX output
         shell: pwsh
         run: |
-          $files = Get-ChildItem -Path AppPackages -Recurse -Include *.appx, *.appxsym
-          if (-not $files) {
-              Write-Error "ERREUR : Aucun fichier .appx généré"
+          $solutionPath = Resolve-Path -Path "Xbox-UWP-App.sln"
+          $appxPackageDir = "$env:GITHUB_WORKSPACE\AppPackages"
+          
+          msbuild $solutionPath `
+            /t:Restore `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:AppxBundle=Never `
+            /p:UapAppxPackageBuildMode=StoreUpload `
+            /p:AppxPackageDir="$appxPackageDir" `
+            /p:OutputPath="$env:GITHUB_WORKSPACE\bin\Release\x64" `
+            /p:WindowsTargetPlatformVersion=10.0.19041.0 `
+            /clp:ErrorsOnly
+
+      # Étape 5 - Vérification améliorée
+      - name: Verify output
+        shell: pwsh
+        run: |
+          $appxFiles = Get-ChildItem -Path "$env:GITHUB_WORKSPACE\AppPackages" -Recurse -Include *.appx, *.appxbundle
+          
+          if ($appxFiles.Count -eq 0) {
+              Write-Host "::error::AUCUN FICHIER TROUVÉ. Contenu de AppPackages :"
+              Get-ChildItem -Path "$env:GITHUB_WORKSPACE\AppPackages" -Recurse | Format-Table FullName
               exit 1
           }
-          Write-Host "Fichiers produits :"
-          $files | ForEach-Object { Write-Host "- $($_.Name)" }
+          
+          Write-Host "Fichiers générés :"
+          $appxFiles | ForEach-Object { Write-Host "- $($_.FullName)" }
 
-      # Étape 7 - Upload
+      # Étape 6 - Upload
       - uses: actions/upload-artifact@v4
         with:
-          name: xbox-app-package
-          path: AppPackages/
+          name: xbox-package
+          path: ${{ github.workspace }}/AppPackages/
           retention-days: 5
-
-      # Déploiement Xbox (optionnel - désactivé par défaut)
-      - name: Deploy to Xbox
-        if: false
-        shell: cmd
-        run: |
-          WinAppDeployCmd install ^
-            -file "AppPackages\*.appx" ^
-            -ip 192.168.1.X ^  # Remplacez par l'IP réelle
-            -pin 123456         # Remplacez par votre PIN
