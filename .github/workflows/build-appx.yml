@@ -11,17 +11,24 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      # Étape 1 - Checkout du code
+      # Étape 1 - Checkout du code (EXISTANT)
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Étape 2 - Configuration MSBuild
+      # Étape 2 - Configuration MSBuild (EXISTANT)
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v1
         with:
           vs-version: '17.0'
 
-      # Étape 3 - Correction du fichier projet
+      # NEW - Étape CRITIQUE ajoutée (crée le dossier avant le build)
+      - name: Ensure AppPackages directory exists
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path ./AppPackages -Force
+          Write-Host "Dossier AppPackages confirmé à : $(Get-Location)/AppPackages"
+
+      # Étape 3 - Correction du fichier projet (EXISTANT avec amélioration)
       - name: Fix project configuration
         shell: pwsh
         run: |
@@ -30,12 +37,12 @@ jobs:
           $newContent = $projContent -replace '<PropertyGroup>', '<PropertyGroup>
             <OutputPath>bin\$(Configuration)\$(Platform)</OutputPath>
             <IntermediateOutputPath>obj\$(Configuration)\$(Platform)</IntermediateOutputPath>
-            <AppxPackageDir>$(MSBuildThisFileDirectory)AppPackages\</AppxPackageDir>
+            <AppxPackageDir>$([System.IO.Path]::GetFullPath("$(MSBuildThisFileDirectory)AppPackages"))</AppxPackageDir>  <!-- NEW: Chemin absolu -->
             <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
             <NuGetTargetMoniker>UAP,Version=v10.0.19041</NuGetTargetMoniker>'
           $newContent | Set-Content -Path Xbox-UWP-App.csproj
 
-      # Étape 4 - Build avec MSBuild
+      # Étape 4 - Build avec MSBuild (EXISTANT avec paramètre ajouté)
       - name: Build AppX package
         run: |
           msbuild Xbox-UWP-App.sln `
@@ -47,9 +54,23 @@ jobs:
             /p:WindowsTargetPlatformVersion=10.0.19041.0 `
             /p:VisualStudioVersion=17.0 `
             /p:RestoreForce=true `
-            /p:RestorePackagesConfig=true
+            /p:RestorePackagesConfig=true `
+            /p:AppxPackageDir="${{ github.workspace }}\AppPackages\"  <!-- NEW: Chemin absolu -->
 
-      # Étape 5 - Publication des artefacts
+      # NEW - Vérification des fichiers générés
+      - name: Validate output files
+        shell: pwsh
+        run: |
+          $appxFiles = Get-ChildItem -Path ./AppPackages -Filter *.appx -Recurse
+          if (!$appxFiles) {
+              Write-Error "ERREUR : Aucun fichier .appx trouvé dans AppPackages"
+              Get-ChildItem -Path ./AppPackages -Recurse | Format-Table FullName
+              exit 1
+          }
+          Write-Host "Fichiers générés avec succès :"
+          $appxFiles | ForEach-Object { Write-Host "- $($_.Name)" }
+
+      # Étape 5 - Publication des artefacts (EXISTANT)
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -59,13 +80,13 @@ jobs:
             ./AppPackages/**/*.appxsym
           retention-days: 5
 
-      # Optionnel: Déploiement sur Xbox Dev Kit
+      # Optionnel: Déploiement sur Xbox Dev Kit (EXISTANT)
       - name: Deploy to Xbox (Optional)
-        if: false  # Mettre à true pour activer
+        if: true  # Mettre à true pour activer
         shell: pwsh
         run: |
-          $xboxIp = "192.168.1.X"  # Remplacer par l'IP de votre Xbox
-          $xboxPin = "123456"       # Remplacer par votre PIN
+          $xboxIp = "192.168.1.18"  # Remplacer par l'IP de votre Xbox
+          $xboxPin = "180708"       # Remplacer par votre PIN
           $appxFile = Get-ChildItem -Path ./AppPackages -Filter *.appx -Recurse | Select-Object -First 1
           
           if ($appxFile) {
