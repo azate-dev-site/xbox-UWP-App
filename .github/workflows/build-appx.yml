@@ -45,7 +45,7 @@ jobs:
 
       # Étape 5: Upload de l'artifact .appx
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: xbox-appx-package
           path: ./AppPackages/**/*.appx
