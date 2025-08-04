@@ -1,0 +1,5 @@
+<Page x:Class="Xbox_UWP_App.MainPage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <Grid Background="#222">
+        <TextBlock Text="Bonjour Xbox !" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="40" Foreground="White"/>
+    </Grid>
+</Page>
