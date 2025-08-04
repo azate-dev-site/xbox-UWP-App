@@ -1,37 +1,96 @@
-name: Build UWP for Xbox
+name: Build and Package Xbox UWP App
 
-on: [push]
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  SOLUTION_NAME: Xbox-UWP-App.sln
+  BUILD_PLATFORM: x64
+  BUILD_CONFIGURATION: Release
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-      # Étape 1: Récupération du code
-      - name: Checkout code
+      # Étape 1 - Checkout du code
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      # Étape 2: Configuration de MSBuild
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v1.3
         with:
-          vs-version: '17.0'  # Visual Studio 2022
+          fetch-depth: 0
 
-      # Étape 3: Installation des dépendances UWP
-      - name: Install UWP dependencies
+      # Étape 2 - Configuration de l'environnement MSBuild
+      - name: Setup MSBuild Environment
+        uses: microsoft/setup-msbuild@v2
+        with:
+          vs-version: '17.0'
+          components: Microsoft.VisualStudio.ComponentGroup.UWP.BuildTools
+
+      # Étape 3 - Installation des dépendances
+      - name: Install Build Tools
         run: |
-          choco install visualstudio2022-workload-universalbuildtools -y --no-progress
+          choco install --yes --no-progress \
+            visualstudio2022-workload-universalbuildtools \
+            visualstudio2022-component-group-unity
           refreshenv
 
-      # Étape 4: Compilation
-      - name: Build Solution
+      # Étape 4 - Vérification de l'environnement
+      - name: Verify Environment
+        shell: pwsh
         run: |
-          msbuild Xbox-UWP-App.sln /p:Configuration=Release /p:Platform=x64 /p:AppxBundle=Always /p:AppxBundlePlatforms="x64" /p:UapAppxPackageBuildMode=StoreUpload
+          Write-Host "MSBuild version:"
+          msbuild /version
+          
+          Write-Host "UWP Components:"
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -products * -requires Microsoft.Component.MSBuild -property installationPath
 
-      # Étape 5: Upload du package
-      - name: Upload Artifact
+      # Étape 5 - Compilation avec journalisation avancée
+      - name: Build Solution
+        shell: pwsh
+        run: |
+          $msbuildArgs = @(
+              "$env:Solution_NAME",
+              "/p:Configuration=$env:BUILD_CONFIGURATION",
+              "/p:Platform=$env:BUILD_PLATFORM",
+              "/p:AppxBundle=Always",
+              "/p:AppxBundlePlatforms=""$env:BUILD_PLATFORM""",
+              "/p:UapAppxPackageBuildMode=StoreUpload",
+              "/m",
+              "/nr:false",
+              "/detailedsummary",
+              "/flp1:v=diag;logfile=build_diagnostics.log",
+              "/flp2:errorsonly;logfile=build_errors.log",
+              "/flp3:warningsonly;logfile=build_warnings.log"
+          )
+
+          msbuild @msbuildArgs
+          
+          # Vérification du résultat
+          if (!(Test-Path "bin\$env:BUILD_PLATFORM\$env:BUILD_CONFIGURATION\AppPackages")) {
+              throw "Build succeeded but AppPackages folder not found!"
+          }
+
+      # Étape 6 - Archivage des résultats
+      - name: Archive Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: AppPackage
-          path: bin/x64/Release/AppPackages/
-          retention-days: 1
+          path: |
+            bin/${{ env.BUILD_PLATFORM }}/${{ env.BUILD_CONFIGURATION }}/AppPackages/
+            *.log
+          retention-days: 3
+
+      # Étape 7 - Notification en cas d'échec
+      - name: Notify on Failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: "❌ Build failed! Check the artifacts for logs."
+            })
