@@ -1,4 +1,4 @@
-name: Build and Package .appx for Xbox
+name: Build Xbox UWP App
 
 on:
   push:
@@ -7,18 +7,32 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest  # Un runner Windows est nécessaire pour MSBuild
+    runs-on: windows-latest  # Runner Windows obligatoire pour UWP
 
     steps:
+      # Étape 1: Checkout du code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up MSBuild
+      # Étape 2: Configuration de MSBuild et des outils Windows SDK
+      - name: Setup build tools
         uses: microsoft/setup-msbuild@v1
+        with:
+          vs-version: '17.0'  # Visual Studio 2022
 
+      # Étape 3: Restauration des packages (méthode robuste pour UWP)
       - name: Restore NuGet packages
-        run: nuget restore Xbox-UWP-App.sln
+        run: |
+          # Méthode 1: MSBuild restore (pour projets UWP)
+          msbuild Xbox-UWP-App.sln /t:restore /p:RestorePackagesConfig=true /p:VisualStudioVersion=17.0
+          
+          # Méthode 2: Fallback avec NuGet.exe (si MSBuild échoue)
+          if ($LASTEXITCODE -ne 0) {
+              curl -o nuget.exe https://dist.nuget.org/win-x86-commandline/latest/nuget.exe
+              ./nuget.exe restore Xbox-UWP-App.sln -DisableParallelProcessing
+          }
 
+      # Étape 4: Compilation du package .appx
       - name: Build .appx package
         run: |
           msbuild Xbox-UWP-App.sln `
@@ -26,10 +40,22 @@ jobs:
             /p:Platform=x64 `
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=StoreUpload `
-            /p:AppxPackageDir=./AppPackages/
+            /p:AppxPackageDir=./AppPackages/ `
+            /p:VisualStudioVersion=17.0
 
-      - name: Upload .appx artifact
-        uses: actions/upload-artifact@v4
+      # Étape 5: Upload de l'artifact .appx
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
         with:
           name: xbox-appx-package
           path: ./AppPackages/**/*.appx
+          retention-days: 5
+
+      # Optionnel : Déploiement sur Xbox en mode dev
+      - name: Deploy to Xbox (Dev Mode)
+        if: false  # Désactivé par défaut (à activer si besoin)
+        run: |
+          $xboxIp = "192.168.1.X"  # Remplacer par l'IP de votre Xbox
+          $xboxPin = "123456"       # Remplacer par votre PIN
+          $appxFile = Get-ChildItem -Path ./AppPackages -Filter *.appx -Recurse | Select-Object -First 1
+          WinAppDeployCmd install -file "$($appxFile.FullName)" -ip $xboxIp -pin $xboxPin
