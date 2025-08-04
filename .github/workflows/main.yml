@@ -14,62 +14,70 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Étape 2 - Configuration MSBuild
-      - name: Setup MSBuild
+      # Étape 2 - Configuration MSBuild (méthode fiable)
+      - name: Setup Build Tools
         uses: microsoft/setup-msbuild@v2
+        with:
+          vs-version: '17.0'
+          components: Microsoft.VisualStudio.ComponentGroup.UWP.BuildTools
 
-      # Étape 3 - Installation des composants UWP
-      - name: Install UWP Build Tools
+      # Étape 3 - Installation alternative des composants UWP
+      - name: Install UWP Dependencies
+        shell: pwsh
         run: |
-          # Installation via le VS Installer
-          $installPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          & "$installPath\Common7\IDE\VSInstaller.exe" modify `
-            --installPath "$installPath" `
-            --add Microsoft.VisualStudio.Workload.Universal `
-            --add Microsoft.VisualStudio.ComponentGroup.UWP.BuildTools `
-            --quiet --norestart --wait
+          # Vérification de l'installation existante
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          
+          if (-not $vsPath) {
+              # Installation minimale si VS n'est pas trouvé
+              Write-Host "Installing Visual Studio Build Tools..."
+              $installerPath = "$env:TEMP\vs_buildtools.exe"
+              Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile $installerPath
+              Start-Process -FilePath $installerPath -ArgumentList '--quiet --wait --add Microsoft.VisualStudio.Workload.UniversalBuildTools' -Wait
+          }
+          
+          # Vérification finale
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe")) {
+              throw "MSBuild UWP not found after installation!"
+          }
 
-      # Étape 4 - Vérification de l'environnement
-      - name: Verify Environment
-        run: |
-          msbuild /version
-          nuget help
-
-      # Étape 5 - Restauration des packages NuGet
+      # Étape 4 - Restauration des packages
       - name: Restore NuGet Packages
         run: nuget restore Xbox-UWP-App.sln
 
-      # Étape 6 - Compilation avec logging détaillé
+      # Étape 5 - Compilation robuste
       - name: Build Solution
+        shell: pwsh
         run: |
-          msbuild Xbox-UWP-App.sln `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /p:AppxBundle=Always `
-            /p:AppxBundlePlatforms="x64" `
-            /p:UapAppxPackageBuildMode=StoreUpload `
-            /detailedsummary `
-            /flp1:v=diag;logfile=build_diagnostics.log `
-            /flp2:errorsonly;logfile=build_errors.log `
-            /flp3:warningsonly;logfile=build_warnings.log
+          $msbuildPath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
+          
+          if (Test-Path $msbuildPath) {
+              & $msbuildPath Xbox-UWP-App.sln `
+                  /p:Configuration=Release `
+                  /p:Platform=x64 `
+                  /p:AppxBundle=Always `
+                  /p:AppxBundlePlatforms="x64" `
+                  /p:UapAppxPackageBuildMode=StoreUpload `
+                  /detailedsummary `
+                  /flp1:v=diag;logfile=build.log
+          } else {
+              throw "MSBuild path not found: $msbuildPath"
+          }
 
-      # Étape 7 - Upload des artefacts
-      - name: Upload App Package
-        if: success()
+      # Étape 6 - Upload des artefacts
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: AppPackage
           path: bin/x64/Release/AppPackages/
+          if-no-files-found: error
           retention-days: 3
 
-      # Étape 8 - Upload des logs en cas d'échec
+      # Étape 7 - Upload des logs en cas d'échec
       - name: Upload Build Logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: BuildLogs
-          path: |
-            build_diagnostics.log
-            build_errors.log
-            build_warnings.log
+          path: build.log
           retention-days: 7
