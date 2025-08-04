@@ -21,19 +21,29 @@ jobs:
         with:
           vs-version: '17.0'
 
-      # Étape 3 - Préparation des répertoires
-      - name: Prepare directories
+      # Étape 3 - Préparation des répertoires et configuration
+      - name: Prepare build environment
         shell: pwsh
         run: |
-          # Créer le répertoire AppPackages explicitement
+          # Créer le répertoire AppPackages
           New-Item -ItemType Directory -Path "./AppPackages" -Force
-          Write-Output "Répertoire AppPackages créé à: $($pwd.Path)\AppPackages"
+          
+          # Modifier le fichier csproj pour désactiver NuGet et définir la version
+          $projContent = Get-Content -Path Xbox-UWP-App.csproj -Raw
+          $newContent = $projContent -replace '<PropertyGroup>', '<PropertyGroup>
+            <DisableNuGetToolset>true</DisableNuGetToolset>
+            <SkipNuGetTargets>true</SkipNuGetTargets>
+            <Version>1.0.0</Version>
+            <AppxPackageDir>$(MSBuildThisFileDirectory)AppPackages\</AppxPackageDir>
+            <OutputPath>bin\$(Configuration)\$(Platform)</OutputPath>
+            <IntermediateOutputPath>obj\$(Configuration)\$(Platform)</IntermediateOutputPath>'
+          $newContent | Set-Content -Path Xbox-UWP-App.csproj
 
-      # Étape 4 - Build avec MSBuild (version modifiée)
+      # Étape 4 - Build avec MSBuild
       - name: Build AppX package
         shell: pwsh
         run: |
-          # Commande MSBuild avec sortie détaillée
+          # Commande MSBuild avec désactivation complète de NuGet
           msbuild Xbox-UWP-App.sln `
             /p:Configuration=Release `
             /p:Platform=x64 `
@@ -41,32 +51,35 @@ jobs:
             /p:UapAppxPackageBuildMode=StoreUpload `
             /p:WindowsTargetPlatformVersion=10.0.19041.0 `
             /p:AppxPackageDir="$($pwd.Path)\AppPackages\" `
-            /p:AppxPackageOutputDir="$($pwd.Path)\AppPackages\" `
             /p:GenerateAppxPackageOnBuild=true `
-            /p:BuildAppxUploadPackageForUap=true `
-            /verbosity:diagnostic
+            /p:RestorePackages=false `
+            /p:DisableNuGetToolset=true `
+            /p:SkipNuGetTargets=true `
+            /verbosity:minimal
 
-          # Diagnostic: Lister tous les fichiers .appx générés
-          Write-Output "=== Recherche des fichiers .appx ==="
-          Get-ChildItem -Path . -Recurse -Filter *.appx | ForEach-Object {
+          # Diagnostic: Lister tous les fichiers générés
+          Write-Output "=== Fichiers générés ==="
+          Get-ChildItem -Path . -Recurse | Where-Object { $_.Extension -in ('.appx','.appxsym') } | ForEach-Object {
               Write-Output "Trouvé: $($_.FullName)"
           }
 
-      # Étape 5 - Vérification des artefacts
-      - name: Verify artifacts
+      # Étape 5 - Vérification et publication des artefacts
+      - name: Verify and upload artifacts
         shell: pwsh
         run: |
-          $appxFiles = Get-ChildItem -Path ./AppPackages -Filter *.appx -Recurse
+          # Vérifier si des fichiers .appx ont été générés
+          $appxFiles = Get-ChildItem -Path . -Recurse -Filter *.appx
           if (-not $appxFiles) {
-              Write-Output "##[error] Aucun fichier .appx trouvé dans AppPackages"
-              Write-Output "Contenu de AppPackages:"
-              Get-ChildItem -Path ./AppPackages -Recurse
+              Write-Output "##[error] Aucun fichier .appx trouvé"
               exit 1
           }
-          Write-Output "Fichiers .appx trouvés:"
-          $appxFiles | ForEach-Object { Write-Output $_.FullName }
+          
+          # Copier les artefacts dans le dossier AppPackages si nécessaire
+          $appxFiles | ForEach-Object {
+              $dest = Join-Path -Path "./AppPackages" -ChildPath $_.Name
+              Copy-Item -Path $_.FullName -Destination $dest -Force
+          }
 
-      # Étape 6 - Publication des artefacts
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
