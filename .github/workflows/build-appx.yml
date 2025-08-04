@@ -21,38 +21,53 @@ jobs:
         with:
           vs-version: '17.0'
 
-      # Étape 3 - Définir la version du projet
-      - name: Set project version
+      # Étape 3 - Préparation des répertoires
+      - name: Prepare directories
         shell: pwsh
         run: |
-          # Ajouter une version explicite au fichier csproj
-          $projContent = Get-Content -Path Xbox-UWP-App.csproj -Raw
-          if (-not $projContent.Contains('<Version>')) {
-              $newContent = $projContent -replace '<PropertyGroup>', '<PropertyGroup>
-                <Version>1.0.0</Version>'
-              $newContent | Set-Content -Path Xbox-UWP-App.csproj
-          }
-
-          # Créer le dossier AppPackages
+          # Créer le répertoire AppPackages explicitement
           New-Item -ItemType Directory -Path "./AppPackages" -Force
+          Write-Output "Répertoire AppPackages créé à: $($pwd.Path)\AppPackages"
 
-      # Étape 4 - Build avec MSBuild
+      # Étape 4 - Build avec MSBuild (version modifiée)
       - name: Build AppX package
+        shell: pwsh
         run: |
+          # Commande MSBuild avec sortie détaillée
           msbuild Xbox-UWP-App.sln `
             /p:Configuration=Release `
             /p:Platform=x64 `
             /p:AppxBundle=Never `
             /p:UapAppxPackageBuildMode=StoreUpload `
             /p:WindowsTargetPlatformVersion=10.0.19041.0 `
-            /p:VisualStudioVersion=17.0 `
             /p:AppxPackageDir="$($pwd.Path)\AppPackages\" `
-            /p:RestorePackages=false `
-            /p:DisableNuGetToolset=true
+            /p:AppxPackageOutputDir="$($pwd.Path)\AppPackages\" `
+            /p:GenerateAppxPackageOnBuild=true `
+            /p:BuildAppxUploadPackageForUap=true `
+            /verbosity:diagnostic
 
-      # Étape 5 - Publication des artefacts
+          # Diagnostic: Lister tous les fichiers .appx générés
+          Write-Output "=== Recherche des fichiers .appx ==="
+          Get-ChildItem -Path . -Recurse -Filter *.appx | ForEach-Object {
+              Write-Output "Trouvé: $($_.FullName)"
+          }
+
+      # Étape 5 - Vérification des artefacts
+      - name: Verify artifacts
+        shell: pwsh
+        run: |
+          $appxFiles = Get-ChildItem -Path ./AppPackages -Filter *.appx -Recurse
+          if (-not $appxFiles) {
+              Write-Output "##[error] Aucun fichier .appx trouvé dans AppPackages"
+              Write-Output "Contenu de AppPackages:"
+              Get-ChildItem -Path ./AppPackages -Recurse
+              exit 1
+          }
+          Write-Output "Fichiers .appx trouvés:"
+          $appxFiles | ForEach-Object { Write-Output $_.FullName }
+
+      # Étape 6 - Publication des artefacts
       - name: Upload artifacts
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: xbox-app-package
