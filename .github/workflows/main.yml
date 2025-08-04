@@ -13,43 +13,47 @@ jobs:
       # Étape 1 - Checkout du code
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # Étape 2 - Installation garantie des outils UWP
-      - name: Install UWP Workload
+      # Étape 2 - Installation des outils UWP
+      - name: Install UWP Tools
         shell: pwsh
         run: |
-          # Téléchargement du VS Installer minimal
+          # Téléchargement du VS Build Tools
           $installerPath = "$env:RUNNER_TEMP\vs_buildtools.exe"
           Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile $installerPath
           
-          # Installation silencieuse des composants requis
-          Start-Process -FilePath $installerPath -ArgumentList @(
+          # Installation des composants requis
+          Start-Process -Wait -FilePath $installerPath -ArgumentList @(
             '--quiet',
             '--wait',
             '--norestart',
             '--add Microsoft.VisualStudio.Workload.Universal',
             '--add Microsoft.VisualStudio.Component.Windows10SDK.19041'
-          ) -Wait -NoNewWindow
-
-          # Ajout au PATH
-          $msbuildPath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin"
-          echo "$msbuildPath" | Out-File -FilePath $env:GITHUB_PATH -Append
+          )
 
       # Étape 3 - Configuration MSBuild
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # Étape 4 - Vérification de l'environnement
-      - name: Verify Installation
+      # Étape 4 - Vérification du projet
+      - name: Validate Project Structure
         shell: pwsh
         run: |
-          $msbuildPath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
-          if (-not (Test-Path $msbuildPath)) {
-              Write-Host "##[error]MSBuild not found at $msbuildPath"
-              Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\" -Recurse -Filter "MSBuild.exe" | Select-Object FullName
-              exit 1
+          $requiredFiles = @(
+              "Xbox-UWP-App.sln",
+              "Xbox-UWP-App/Xbox-UWP-App.csproj",
+              "Xbox-UWP-App/Package.appxmanifest"
+          )
+          
+          foreach ($file in $requiredFiles) {
+              if (-not (Test-Path $file)) {
+                  Write-Error "File missing: $file"
+                  Get-ChildItem -Recurse
+                  exit 1
+              }
           }
-          & $msbuildPath /version
 
       # Étape 5 - Restauration NuGet
       - name: Restore Packages
@@ -59,31 +63,29 @@ jobs:
       - name: Build Solution
         shell: pwsh
         run: |
-          $msbuildPath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
-          & $msbuildPath Xbox-UWP-App.sln `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /p:AppxBundle=Always `
-            /p:AppxBundlePlatforms="x64" `
-            /p:UapAppxPackageBuildMode=StoreUpload `
-            /detailedsummary `
-            /flp1:v=diag;logfile=build_diagnostics.log
+          $msbuildArgs = @(
+              "Xbox-UWP-App.sln",
+              "/p:Configuration=Release",
+              "/p:Platform=x64",
+              "/p:AppxBundle=Always",
+              "/p:AppxBundlePlatforms=`"x64`"",
+              "/p:UapAppxPackageBuildMode=StoreUpload",
+              "/m",
+              "/nr:false",
+              "/detailedsummary",
+              "/flp:`"v=diag;logfile=build.log`""
+          )
+          
+          msbuild @msbuildArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Étape 7 - Publication des artefacts
-      - name: Upload Package
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: AppPackage
-          path: bin/x64/Release/AppPackages/
+          path: |
+            Xbox-UWP-App/bin/x64/Release/AppPackages/
+            build.log
           if-no-files-found: error
           retention-days: 3
-
-      # Étape 8 - Backup des logs
-      - name: Upload Logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: BuildLogs
-          path: |
-            build_diagnostics.log
-            **/*.binlog
-          retention-days: 7
