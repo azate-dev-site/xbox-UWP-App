@@ -5,10 +5,32 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Build Tools
-        run: choco install visualstudio2022-workload-universalbuildtools -y
+      
+      - name: Setup MSBuild Path
+        shell: pwsh
+        run: |
+          $msbuildPath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe"
+          if (-not (Test-Path $msbuildPath)) {
+              $msbuildPath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
+          }
+          echo "MSBuild path: $msbuildPath"
+          echo "MSBUILD_PATH=$msbuildPath" >> $env:GITHUB_ENV
+
+      - name: Install UWP Workload
+        run: |
+          choco install visualstudio2022-workload-universalbuildtools -y --no-progress
+          refreshenv
+
       - name: Build Solution
-        run: msbuild Xbox-UWP-App.sln /p:Configuration=Release /p:Platform=x64
+        shell: pwsh
+        run: |
+          if (Test-Path $env:MSBUILD_PATH) {
+              & "$env:MSBUILD_PATH" Xbox-UWP-App.sln /p:Configuration=Release /p:Platform=x64
+          } else {
+              Write-Error "MSBuild not found!"
+              Exit 1
+          }
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
